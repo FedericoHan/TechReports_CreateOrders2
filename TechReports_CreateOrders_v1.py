@@ -19,13 +19,15 @@ import pandas as pd
 #from jinja2 import Environment, FileSystemLoader
 
 class dfWithTechLevels(object):
-    '''takes as input df of daily or hourly prices with PX_LAST, then returns df with extra bunch of tech indicators like MAs, 
-    realized_vol_annualized, and highest & lowest rolling yearly closes'''
+    
+    '''takes as input df of daily or hourly prices with MultiIndex Columns (SomeCurncy, PX_LAST)
+    then returns df with extra bunch of tech indicators like MAs,realized_vol_annualized, and highest & lowest rolling yearly closes'''
     
     def __init__(self, df_input, obs_tenor = 'D'):
         
         self.df_input = df_input 
         self.obs_tenor = obs_tenor
+        self.vol_tenor = vol_tenor
         
         if self.obs_tenor == 'D':
             self.df_techs = self.create_techs(vol_tenor = 21)
@@ -37,14 +39,14 @@ class dfWithTechLevels(object):
         
         df_techs = self.df_input
         
-        for col in self.df_input:
-            if 'PX_LAST' in col: #only take average of PX_LAST
+        for col in self.df_input: #col will return tuple (SomeCurncy, PX_LAST)
+            if 'PX_LAST' in col: #perform operations only on  PX_LAST.  col[0] returns first elment of tuple, ie SomeCurncy
                 df_techs[col[0]+'_21DMA'] = self.df_input[col].rolling(21, min_periods = 1).mean()#maybe try self.df_input.loc[:,col].rolling(21, min periods =1).mean()
                 df_techs[col[0]+'_55DMA'] = self.df_input[col].rolling(55, min_periods = 1).mean()
                 df_techs[col[0]+'_100DMA'] = self.df_input[col].rolling(100, min_periods = 1).mean()
                 df_techs[col[0]+'_200DMA'] = self.df_input[col].rolling(200, min_periods = 1).mean()#rolling(200, center = TRUE-->WRONG average)
-                df_techs[col[0]+'_55_weeks_high'] = self.df_input[col].rolling(55, min_periods = 55).max() #currently using PX_LAST, later jsut feed PX_HIGH
-                df_techs[col[0]+'_55_weeks_low'] = self.df_input[col].rolling(55, min_periods= 55).min() #currenlty_using PX_LAST, late just feed PX_LOW
+                df_techs[col[0]+'_55_periods_high'] = self.df_input[col].rolling(55, min_periods = 55).max() #currently using PX_LAST, later jsut feed PX_HIGH
+                df_techs[col[0]+'_55_periods_low'] = self.df_input[col].rolling(55, min_periods= 55).min() #currenlty_using PX_LAST, late just feed PX_LOW
                 
                 df_techs[col[0]+'_realized_vol_unit'] = self.df_input[col].pct_change().rolling(vol_tenor, min_periods = vol_tenor).std()#this is daily or weekly
                 if self.obs_tenor == 'D':
@@ -172,18 +174,19 @@ class CreateOrders(object):
 
 
     def create_orders_df(self, amount_basic, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = 1):
-        '''begins creating df with orders etc.  number odas, gamma either 1.0 for long or -1.0 for short '''
+        '''begins creating df with orders etc.  number odas, gamma either 1.0 for long or -1.0 for short 
+        for now gamma ignore...use odas_below and odas above to control'''
         pair = self.pair#USDTWD or EURUSD or whatever
         
         #reformat to match the NDF convention
         if pair == 'USDIDR':
-            pair == 'IHN' #should be assignment, not boolean?
+            pair = 'IHN' #should be assignment, not boolean?
         elif pair == 'USDKRW':
-            pair == 'KWN'
+            pair = 'KWN'
         elif pair == 'USDTWD':
             pair = 'NTN'#for somre reason str.contains NTN+1M doesnt find it
         elif pair == 'USDPHP':
-            pair == 'PPN'
+            pair = 'PPN'
             #print('True', pair)#debugger
                         
         #filter out from merged the currency of interest, eg USDTWD --> NTN+1M        
@@ -192,7 +195,7 @@ class CreateOrders(object):
         #since wont use hourly odas for now delete 55hma and 200hma or calcs below break down
         df_pair = df_pair[~df_pair.Instru.str.contains('HMA')]
         #https://stackoverflow.com/questions/61926275/pandas-row-operations-on-a-column-given-one-reference-value-on-a-different-col
-        #creates two extra columns,
+        #creates two extra columns, to make performing df.at operations more easily
         df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True)
         #will use this as Index to use the df.at method later
         df_pair = df_pair.set_index('Descr')
@@ -224,6 +227,7 @@ class CreateOrders(object):
         
         
         df_pair['Rate'] = 0.0 #init
+        
         # below is for odas near techincal levels
         #if TP to sell, pick resistance - (daily_vol * margin, else pick support + (daily_vol*margin))
         df_pair['Rate'] = (df_pair['VALUE']*(1- (df_pair.at['realized_vol_unit','VALUE'])*self.distance_from_techs)).where(df_pair['Intent']=='S',\
@@ -267,12 +271,14 @@ class CreateOrders(object):
         '''If want to scale amount by vol_distance
         create temp_columsn to see how far each row is from the next in vol units to scale notionals #'''
         df_pair = df_pair.sort_values(by = 'Rate', ascending = False)
-        df_pair['Temp_col2'] = df_pair['Rate'].pct_change(periods = -1)#diff with folloiwngrow, https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.diff.html?highlight=diff#pandas.DataFrame.diff 
+        df_pair['Temp_col2'] = df_pair['Rate'].pct_change(periods = -1)#diff with folloiwng row, https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.diff.html?highlight=diff#pandas.DataFrame.diff 
         
         for i in range(len(df_pair)-1):
             #calculate distance between two odas, then scale order notionals by it.
-            if df_pair['Temp_col2'].iloc[i] <= 0.001:
-                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i] * 0.5#later we scale this by gamma and/or distance
+            if df_pair['Temp_col2'].iloc[i] <= 0.001: #if distance between two odas is small
+                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i] * 0.5 #later we scale this by gamma and/or distance
+                df_pair['Amount'].iloc[i+1] = amount_basic * 0.5
+                
             else:
                 df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i]
 
@@ -437,14 +443,14 @@ if __name__ == "__main__":
     eur_export = eur.format_create_orders_df('xlsx')
     
     eurcnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'EUR', Ccy2 = 'CNH', \
-                          FixedCcy = 'EUR', Tenor = 'SP', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
+                          FixedCcy = 'EUR', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
     eurcnh_format = eurcnh.create_orders_df(0.5e6, odas_below = 2, odas_above = 2, gamma_local = 1, gamma_below = 1, gamma_above = -1)
     eurcnh_export = eurcnh.format_create_orders_df('xlsx')
     
     
     cnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'CNH', \
-                          FixedCcy = 'USD', Tenor = 'SP', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
-    cnh_format = cnh.create_orders_df(1e6, odas_below = 3, odas_above = 2, gamma_local = 1, gamma_below = 1, gamma_above = -1)
+                          FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
+    cnh_format = cnh.create_orders_df(1e6, odas_below = 0, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = -1)
     cnh_export = cnh.format_create_orders_df('xlsx')
 
     

@@ -23,7 +23,7 @@ class dfWithTechLevels(object):
     '''takes as input df of daily or hourly prices with MultiIndex Columns (SomeCurncy, PX_LAST)
     then returns df with extra bunch of tech indicators like MAs,realized_vol_annualized, and highest & lowest rolling yearly closes'''
     
-    def __init__(self, df_input, obs_tenor = 'D'):
+    def __init__(self, df_input, obs_tenor = 'D', vol_tenor = 21):
         
         self.df_input = df_input 
         self.obs_tenor = obs_tenor
@@ -305,8 +305,8 @@ class CreateOrders(object):
         
         return df_pair
 
-    
-    def format_create_orders_df(self, csv_or_xlsx_flag):
+    #changed xlsx to xls
+    def format_create_orders_df(self, csv_or_xls_flag):
        
         '''clean up the create_orders_df removing columns and rows not needed and then create .csv or .xlsx to upload into barraquada'''
         #call df from above method
@@ -321,15 +321,33 @@ class CreateOrders(object):
         df_format['ID'] = [n for n in range(len(df_format))]
         df_format = df_format.set_index('ID')
         
-        if csv_or_xlsx_flag == 'csv':
+        
+        if csv_or_xls_flag == 'csv':
             
-            df_format.to_csv(str(self.pair)+str('.csv'), float_format = '%.4f')
+            df_format.to_csv(str(self.pair)+str('.csv'), float_format = '%.4f')#so rates dont have gazillions digits which Barra cant read
             
-        elif csv_or_xlsx_flag == 'xlsx':
+        elif csv_or_xls_flag == 'xls':#changed from xlsx
             
-            df_format.to_excel(str(self.pair)+str('.xlsx'), float_format = '%.4f')
+            df_format.to_excel(str(self.pair)+str('.xls'), float_format = '%.4f')#so rates dont have gazillions digits which Barra cant read
             
         return df_format
+    
+    
+class TrendingOrders(CreateOrders):
+    
+    def __init__(self, df_tech_levels, distance_from_techs, order_Type,\
+                     Client,   Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private):
+        super().init(self, df_tech_levels, distance_from_techs, order_Type,\
+                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private)
+
+    def create_orders_trend(self):
+        
+        
+
+
+
+test = CreateOrders(merged_asia, 0.2, 'TP', 'CP85VC', 'FXOETFSG1', 'USD', 'PHP', 'USD', '1M', 'NOW', '', '', '','')
+test2 = test.create_orders_df(1e6)
 
 
 if __name__ == "__main__":
@@ -440,23 +458,26 @@ if __name__ == "__main__":
     ###########
     eur = CreateOrders(merged_g10, 0.2, 'TP','CP85VC', 'FXOETFSG2', 'EUR','USD','EUR', 'SP', 'NOW','','', '','' )
     eur_format = eur.create_orders_df( 1e6)
-    eur_export = eur.format_create_orders_df('xlsx')
+    eur_export = eur.format_create_orders_df('xls')
     
     eurcnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'EUR', Ccy2 = 'CNH', \
                           FixedCcy = 'EUR', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
     eurcnh_format = eurcnh.create_orders_df(0.5e6, odas_below = 2, odas_above = 2, gamma_local = 1, gamma_below = 1, gamma_above = -1)
-    eurcnh_export = eurcnh.format_create_orders_df('xlsx')
+    eurcnh_export = eurcnh.format_create_orders_df('xls')
     
     
     cnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'CNH', \
                           FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
     cnh_format = cnh.create_orders_df(1e6, odas_below = 0, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = -1)
-    cnh_export = cnh.format_create_orders_df('xlsx')
+    cnh_export = cnh.format_create_orders_df('xls')
 
+    php = CreateOrders(merged_asia, 0.2, 'TP', 'CP85VC', 'FXOETFSG1', 'USD', 'PHP', 'USD', '1M', 'NOW', '', '', '','')
+    php_format = php.create_orders_df(1e6)
+    php_export = php.format_create_orders_df('xls')
     
     twd = CreateOrders(merged_asia, 0.2, 'TP','CP85VC', 'FXOETFSG1', 'USD','TWD','USD', '1M', 'NOW','','', '','' )
     twd_format = twd.create_orders_df(1e6)
-    twd_export = twd.format_create_orders_df('xlsx')
+    twd_export = twd.format_create_orders_df('xls')
      
 
         

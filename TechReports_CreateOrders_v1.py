@@ -5,7 +5,7 @@ Created on Sun Apr 19 12:30:46 2020
 @author: Fed
 
 Goal1: create big snapshot with all the levels in one page. First created a collection of dataframes all at once (object: dfWithTechLevels) and
-then created the snapshots (object dfLatestTechs)
+then created the snapshots (object dfLatestTechs, Latest is baiscally todays.)
 Goal2: automate creation of orders (object: CreateOrders)
 """
 
@@ -21,7 +21,7 @@ import pandas as pd
 class dfWithTechLevels(object):
     
     '''takes as input df of daily or hourly prices with MultiIndex Columns (SomeCurncy, PX_LAST)
-    then returns df with extra bunch of tech indicators like MAs,realized_vol_annualized, and highest & lowest rolling yearly closes'''
+    then returns df with extra bunch of tech indicators like MAs,realized_vol_annualized, and highest & lowest rolling [55days] closes'''
     
     def __init__(self, df_input, obs_tenor = 'D', vol_tenor = 21):
         
@@ -67,7 +67,7 @@ class dfWithTechLevels(object):
     
 
 class dfLatestTechs(dfWithTechLevels):
-    '''takes latest values from dfWithTechLevels (dailies or hourlies) and formats the latest ones, plus one method to merge dailies & hourly'''
+    '''takes latest values from dfWithTechLevels (dailies or hourlies) and formats them, plus one method to merge dailies & hourly'''
     
     def __init__(self, df_input, obs_tenor):
         super().__init__(df_input, obs_tenor)   
@@ -120,11 +120,17 @@ class dfLatestTechs(dfWithTechLevels):
         df_signals_all = self.df_signals.append(self.df_hourly).drop_duplicates(subset = 'Instru')#if you have USDCNH Curcny on both df['Instru'] get rid of one
         return df_signals_all
     
-    
+     #   cnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'CNH', \
+      #                FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+       #               amount_basic = 1e6, odas_below = 2, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
+
+    #cnh_format = cnh.create_orders_df()
+   # cnh_export = cnh.format_create_orders_df('xls') 
+
 class CreateOrders(object):
-    '''odas logic: start eurusd and usdtwd as always similar possy long gamma down middle up? 
-    questions: do you want one set of oda per currency OR one with all odas together?
-    lets say is one per currency then collect data from merged_asia....sort them high to low...and add oda for each levels just before normalized by xVols'''
+    '''Takes as input MergedAsia,then create_orders_df will filter out currency of interest, and return a df 
+    with odas by some logic, in format matching what Barraquda requires and as i type this i wonder if this can be moved to 
+    format_create_orders which returns an xls or csv for easy upload into Barra'''
     #below Class variables for uncommon columns, still needed to upload into Barra , usually '' for all instances
     ID = '' 
     Parent = '' 
@@ -143,9 +149,13 @@ class CreateOrders(object):
     SLSlippage = ''
     HoldSTP = ''
     BMBulkEligible = ''
-        
+    #the actual uploadable barraquada file nees an empty column, more deets below  
+    SettlementType = 'CLS'#CLS, CSH or GRS
+    
+    
     def __init__(self, df_tech_levels, distance_from_techs, order_Type,\
-                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private):
+                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private,\
+                     amount_basic, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = 1):
         
         self.df_tech_levels = df_tech_levels#df with latest tech levels..so ideally df_signals from dfLatestTechs Class
         self.distance_from_techs = distance_from_techs#0.1; scaling factor*daily_vol, eg 50% * 0.0025, the smaller the neaarer to the tech levels
@@ -170,13 +180,19 @@ class CreateOrders(object):
         self.Fixing = Fixing
         self.Comment_client = Comment_client
         self.Comment_private = Comment_private
-            
+        
+        self.amount_basic, self.odas_below, self.odas_above = amount_basic, odas_below, odas_above
+        #can use these as multipliers to increase / decrease notionals based on gamma
+        self.gamma_local, self.gamma_below, self.gamma_above = gamma_local, gamma_below, gamma_above
+        
+        
 
+    def create_orders_df(self):
 
-    def create_orders_df(self, amount_basic, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = 1):
-        '''begins creating df with orders etc.  number odas, gamma either 1.0 for long or -1.0 for short 
+        '''begins creating df with orders etc.  number odas, gamma either 1.0 for long or -1.0 for short
         for now gamma ignore...use odas_below and odas above to control'''
-        pair = self.pair#USDTWD or EURUSD or whatever
+
+        pair = self.pair#USDTWD,EURUSD,etc
         
         #reformat to match the NDF convention
         if pair == 'USDIDR':
@@ -187,111 +203,151 @@ class CreateOrders(object):
             pair = 'NTN'#for somre reason str.contains NTN+1M doesnt find it
         elif pair == 'USDPHP':
             pair = 'PPN'
-            #print('True', pair)#debugger
-                        
-        #filter out from merged the currency of interest, eg USDTWD --> NTN+1M        
+  
+        #filter out from merged_df the currency of interest, eg USDTWD --> NTN+1M       
         df_pair = self.df_tech_levels[self.df_tech_levels.loc[:, 'Instru'].str.contains(pair)]
-        
         #since wont use hourly odas for now delete 55hma and 200hma or calcs below break down
         df_pair = df_pair[~df_pair.Instru.str.contains('HMA')]
-        #https://stackoverflow.com/questions/61926275/pandas-row-operations-on-a-column-given-one-reference-value-on-a-different-col
+        
         #creates two extra columns, to make performing df.at operations more easily
-        df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True)
+        #based on:  https://stackoverflow.com/questions/61926275/pandas-row-operations-on-a-column-given-one-reference-value-on-a-different-col
+        df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True) #df_pair['Instru']looks like 'EURCNH Curncy_55DMA' etc
         #will use this as Index to use the df.at method later
         df_pair = df_pair.set_index('Descr')
-        df_pair.index = df_pair.index.fillna('empty')
-        #print(df_pair.head())
-
-        #create columns to match Barraquda inputs, generally blank
+        df_pair.index = df_pair.index.fillna('empty') #rename 'na' or ' ', ie, EURCNH Curncy with 'empty' for df.at below
+        
+        gamma_range_local = (df_pair.at['empty', 'VALUE']*(1-df_pair.at['realized_vol_unit', 'VALUE']), df_pair.at['empty','VALUE']*(1+df_pair.at['realized_vol_unit','VALUE']))
+        print('gamma_range_local '+str(gamma_range_local))
+        
+        ########
+        #begin creating dataframe that will become Barra report.  First create columns to match Barraquda inputs, generally blank
+        ########
+        
         df_pair['ID'] = CreateOrders.ID#blank class var
         df_pair['Parent'] = CreateOrders.Parent#blank class var
         df_pair['Peer'] = CreateOrders.Peer #blank class var
         df_pair['Relationship'] = CreateOrders.Relationship#blank class var
         
-        #columsn actually important
+        #########
+        #These columns below are actually important, class attributes defined by user at instantation 
+        #########
+        
         df_pair['Type'] = self.order_Type
         df_pair['Side'] = self.Side
         df_pair['Client'] =self.Client
-        
+     
         df_pair['Account'] = self.Account
         df_pair['Ccy1'] = self.Ccy1
         df_pair['Ccy2'] = self.Ccy2
-        
+        #########
         #CORE of work is here..first  create buy_sell_flag called 'intent'
         df_pair['Intent'] = np.where(df_pair['Trend'] == 'Down', 'S', 'B')
+        df_pair['Amount'] = self.amount_basic#init
         
-        df_pair['Amount'] = amount_basic#init
-        df_pair['Fixed Ccy'] = self.Ccy1 #useless 
-        df_pair['Value Date'] = CreateOrders.ValueDate #blank class far
-        df_pair['Tenor'] = self.Tenor
-        
-        
+        df_pair['Fixed Ccy'] = self.Ccy1 #useless
+        df_pair['Value Date'] = CreateOrders.ValueDate #blank class var
+        df_pair['Tenor'] = self.Tenor 
+               
         df_pair['Rate'] = 0.0 #init
         
+        #####
         # below is for odas near techincal levels
-        #if TP to sell, pick resistance - (daily_vol * margin, else pick support + (daily_vol*margin))
+        #e.g. TP to sell, pick resistance - (daily_vol * margin, else pick support + (daily_vol*margin))
+        ######
         df_pair['Rate'] = (df_pair['VALUE']*(1- (df_pair.at['realized_vol_unit','VALUE'])*self.distance_from_techs)).where(df_pair['Intent']=='S',\
                                                                                                                            df_pair['VALUE']*(1 + (df_pair.at['realized_vol_unit','VALUE'] * self.distance_from_techs)))
-           
+ 
         #then create odas based on stdev
-        num_odas = odas_above + odas_below
+        num_odas = self.odas_above + self.odas_below
         ##create num_odas new rows
         df_pair_annex = pd.DataFrame([df_pair.loc['realized_vol_unit']] * num_odas)
-          
-        #then  create odas tech levels 
+        #then  create odas tech levels
+        #print('odas_ above :'+str(self.odas_above))
         counter_above = 1
         counter_below = 1
+        
         for i in range(num_odas):
             #add odas above
-            if i < odas_above:
+            if i < self.odas_above:
+                
                 df_pair_annex['Rate'].iloc[i] = df_pair.at['empty', 'VALUE'] * (1 + df_pair.at['realized_vol_unit', 'VALUE']*(counter_above))#spot or NDF * (1 + stDev) * counter
                 df_pair_annex['Instru'].iloc[i] = 'Gamma oda '+str(counter_above)+str(' stDev above')
+                
+                #multipy notional by gamma_local if in local zone or by gamma_above if above
+                if df_pair_annex['Rate'].iloc[i] < gamma_range_local[1]: #gamma_range_local = tuple(lower_bound, higher_bound) [0, 1]
+                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_local
+                df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_above
+                
                 counter_above += 1
+
                 if df_pair_annex['Rate'].iloc[i] >= df_pair.at['empty', 'VALUE']:#because df_pair_annex just takes the Intent from .loc['realized_vol_unit], need to update, so if Oda > Spot, = Sell if TP
                     df_pair_annex['Intent'].iloc[i] = 'S'#== doesnt work as boolean test?
                 else:
                     df_pair_annex['Intent'].iloc[i] = 'B'
-            #add odas below           
+
+            #add odas below          
             else:
                 df_pair_annex['Rate'].iloc[i] = df_pair.at['empty', 'VALUE'] * (1 - df_pair.at['realized_vol_unit', 'VALUE']*(counter_below))
                 df_pair_annex['Instru'].iloc[i] = 'Gamma oda '+str(counter_below)+str(' stDev below')
+                
+                #multipy notional by gamma_local if in local zone or by gamma_above if above
+                if df_pair_annex['Rate'].iloc[i] > gamma_range_local[0]: #gamma_range_local = tuple(lower_bound, higher_bound) [0, 1]
+                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_local
+                df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * abs(self.gamma_below)
+                
                 counter_below += 1
+
                 if df_pair_annex['Rate'].iloc[i] <= df_pair.at['empty', 'VALUE']:#because df_pair_annex just takes the Intent from .loc['realized_vol_unit], need to update, so if Oda < Spot, = Buy if TP
                     df_pair_annex['Intent'].iloc[i] = 'B'
-                else: 
+                else:
                     df_pair_annex['Intent'].iloc[i] = 'S'
-                    
+                 
         #merge df of odas near tech with df odas various st_devs away
         df_pair = df_pair.append(df_pair_annex)
         df_pair = df_pair.reset_index(drop = True).drop(columns = 'Fruit')
-        
+
         #get rid of row that has pivot spot or 1s NDF, ie VALUE - Distance from Value == 0
         df_pair = df_pair[df_pair['Distance_%'] != 0.0]
-        
+
         '''If want to scale amount by vol_distance
         create temp_columsn to see how far each row is from the next in vol units to scale notionals #'''
-        df_pair = df_pair.sort_values(by = 'Rate', ascending = False)
-        df_pair['Temp_col2'] = df_pair['Rate'].pct_change(periods = -1)#diff with folloiwng row, https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.diff.html?highlight=diff#pandas.DataFrame.diff 
-        
-        for i in range(len(df_pair)-1):
-            #calculate distance between two odas, then scale order notionals by it.
-            if df_pair['Temp_col2'].iloc[i] <= 0.001: #if distance between two odas is small
-                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i] * 0.5 #later we scale this by gamma and/or distance
-                df_pair['Amount'].iloc[i+1] = amount_basic * 0.5
-                
-            else:
-                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i]
 
+        df_pair = df_pair.sort_values(by = 'Rate', ascending = False)
+        df_pair['Temp_col2'] = df_pair['Rate'].pct_change(periods = -1)#diff with folloiwng row, https://pandas.pydata.org/pandas-docs/stable/reference/api/pandas.DataFrame.diff.html?highlight=diff#pandas.DataFrame.diff
+        #drop odas that are too close to each other
+        df_pair = df_pair.drop(df_pair[df_pair.Temp_col2 < 0.001].index)
+        
+        ''' this code would have halved the notionals of clustered odas instead of dropping them 
+        for i in range(len(df_pair)-1):
+            #calculate distance between two odas, then scale order notionals by it or delete one of the two, print warning
+            if df_pair['Temp_col2'].iloc[i] <= 0.001: #if distance between two odas is small
+                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i] * 0.5 #
+                df_pair['Amount'].iloc[i+1] = self.amount_basic * 0.5               
+            else:
+                df_pair['Amount'].iloc[i] = df_pair['Amount'].iloc[i]'''
+       
+ 
         #below is for rigid odas                                                                                           
         df_pair['Activation'] = self.Activation
-        df_pair['Expiry'] = self.Expiry
+
+        #Please enter column R (expiry) as 19/05/2020 08:15 SGT
+        expiry = dt.datetime.today() + pd.tseries.offsets.BusinessDay(n = 1) #expire 1Bd after today
+        timestamp = expiry.strftime("%d/%m/%Y") + str(' 08:15 SGT')
+        print(timestamp)
+
+        df_pair['Expiry'] = timestamp#self.Expiry
+     
         df_pair['Fixing'] = self.Fixing
-        df_pair['Comment (Client)'] = ''
-        
+        df_pair['Comment (Client)'] = ''       
         df_pair['Comment (Private)'] = df_pair['Instru']# what level corresponds too
-        
+
+        if self.Tenor == '1M': #NDFs need to have this field populated
+            df_pair['Product'] = 'NDF'
+        else:
+            df_pair['Product'] = CreateOrders.Product#blank class var
+
         #create columns to match Barraquda inputs, generally blank
-        df_pair['Product'] = CreateOrders.Product#blank class var
+
         df_pair['Fixing Date'] = CreateOrders.FixingDate#blank class var
         df_pair['Tracking'] = CreateOrders.Tracking#blank k var
         df_pair['Requesting User'] = CreateOrders.RequestingUser
@@ -303,52 +359,58 @@ class CreateOrders(object):
         df_pair['Hold STP'] = CreateOrders.HoldSTP
         df_pair['BM BulkEligible'] = CreateOrders.BMBulkEligible
         
-        return df_pair
-
+        #below needed as: "Also please note that in order for the spreadsheet to import with the settlementtype a blank column is required to the left of the settlementtype column."
+        df_pair[''] = '' 
+        
+        df_pair['SettlementType'] = 'GRS'#ype #Gross Cash or CLS
+        
+        return df_pair 
+    
     #changed xlsx to xls
     def format_create_orders_df(self, csv_or_xls_flag):
-       
+
         '''clean up the create_orders_df removing columns and rows not needed and then create .csv or .xlsx to upload into barraquada'''
         #call df from above method
-        df_format = self.create_orders_df(1e6)
+        df_format = self.create_orders_df()
         #remove columns not in the template provided by Barracuda
         df_format = df_format.dropna(axis = 0) #drop rows with nan , ie 200hma and 55hma
         #df_format = df_format.drop( ['Instru','VALUE','Distance_%','Distance_vol', 'Trend', 'Temp_col_realized_vol_unit', 'Temp_col2_vol_difference'], axis = 1)
         df_format = df_format.drop( ['Instru','VALUE','Distance_%','Distance_vol', 'Trend', 'Temp_col2'], axis = 1)
-        
         df_format = df_format[~df_format['Comment (Private)'].str.contains('vol')]#drop rows with vols value
-        #set ID column 0 to n and then set as index
+       #set ID column 0 to n and then set as index
         df_format['ID'] = [n for n in range(len(df_format))]
         df_format = df_format.set_index('ID')
-        
-        
+
+        #so rates dont have gazillions digits which Barra cant read
+        dictio_floats = {'CNH': '%.4f',#EURCNH
+                         'IDR': '%.2f',
+                         'JPY': '%.2f',
+                         'KRW': '%.2f',
+                         'PHP': '%.2f',
+                         'USD': '%.4f',#EURUSD
+                         'TWD': '%.2f'}
+
+        dictio_key = df_format.Ccy2.iloc[0]
+        #print(dictio_key, dictio_floats[dictio_key])
+
         if csv_or_xls_flag == 'csv':
-            
-            df_format.to_csv(str(self.pair)+str('.csv'), float_format = '%.4f')#so rates dont have gazillions digits which Barra cant read
-            
-        elif csv_or_xls_flag == 'xls':#changed from xlsx
-            
-            df_format.to_excel(str(self.pair)+str('.xls'), float_format = '%.4f')#so rates dont have gazillions digits which Barra cant read
-            
+            df_format.to_csv(str(self.pair)+str('.csv'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read
+      
+        elif csv_or_xls_flag == 'xls':#changed from xlsx     
+            df_format.to_excel(str(self.pair)+str('.xls'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read     
         return df_format
-    
-    
+
+ 
 class TrendingOrders(CreateOrders):
-    
+
     def __init__(self, df_tech_levels, distance_from_techs, order_Type,\
                      Client,   Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private):
         super().init(self, df_tech_levels, distance_from_techs, order_Type,\
                      Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private)
 
+ 
     def create_orders_trend(self):
-        
-        
-
-
-
-test = CreateOrders(merged_asia, 0.2, 'TP', 'CP85VC', 'FXOETFSG1', 'USD', 'PHP', 'USD', '1M', 'NOW', '', '', '','')
-test2 = test.create_orders_df(1e6)
-
+        pass
 
 if __name__ == "__main__":
     
@@ -452,35 +514,48 @@ if __name__ == "__main__":
     #aggregated df for G10 levels
     merged_g10 = g10_daily_sign.append(g10_hourly_sign).drop_duplicates(subset = 'Instru')
      
-    
+ 
+
     ###########
-    ##create odas 
+    ##create odas
     ###########
-    eur = CreateOrders(merged_g10, 0.2, 'TP','CP85VC', 'FXOETFSG2', 'EUR','USD','EUR', 'SP', 'NOW','','', '','' )
-    eur_format = eur.create_orders_df( 1e6)
-    eur_export = eur.format_create_orders_df('xls')
+    eur = CreateOrders(merged_g10, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG2', Ccy1 = 'EUR', Ccy2 = 'USD', \
+                      FixedCcy = 'EUR', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+                      amount_basic = 1e6, odas_below = 2, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1)  
+    eur_format = eur.create_orders_df()
+    eur_export = eur.format_create_orders_df('xls') 
+
     
-    eurcnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'EUR', Ccy2 = 'CNH', \
-                          FixedCcy = 'EUR', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
-    eurcnh_format = eurcnh.create_orders_df(0.5e6, odas_below = 2, odas_above = 2, gamma_local = 1, gamma_below = 1, gamma_above = -1)
-    eurcnh_export = eurcnh.format_create_orders_df('xls')
-    
-    
+    jpy = CreateOrders(merged_g10, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG2', Ccy1 = 'USD', Ccy2 = 'JPY', \
+                      FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+                      amount_basic = 700000, odas_below = 2, odas_above = 2, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
+
+    jpy_format = jpy.create_orders_df()
+    jpy_export = jpy.format_create_orders_df('xls') 
+
+
     cnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'CNH', \
-                          FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '')   
-    cnh_format = cnh.create_orders_df(1e6, odas_below = 0, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = -1)
-    cnh_export = cnh.format_create_orders_df('xls')
+                      FixedCcy = 'USD', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+                      amount_basic = 1e6, odas_below = 2, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
 
-    php = CreateOrders(merged_asia, 0.2, 'TP', 'CP85VC', 'FXOETFSG1', 'USD', 'PHP', 'USD', '1M', 'NOW', '', '', '','')
-    php_format = php.create_orders_df(1e6)
-    php_export = php.format_create_orders_df('xls')
+    cnh_format = cnh.create_orders_df()
+    cnh_export = cnh.format_create_orders_df('xls') 
+
     
-    twd = CreateOrders(merged_asia, 0.2, 'TP','CP85VC', 'FXOETFSG1', 'USD','TWD','USD', '1M', 'NOW','','', '','' )
-    twd_format = twd.create_orders_df(1e6)
-    twd_export = twd.format_create_orders_df('xls')
-     
 
-        
+    php = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'PHP', \
+                      FixedCcy = 'USD', Tenor = '1M', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+                      amount_basic = 1e6, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1)  
+    php_format = php.create_orders_df()
+    php_export = php.format_create_orders_df('xls')
+
+    
+    krw = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'KRW', \
+                      FixedCcy = 'USD', Tenor = '1M', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
+                      amount_basic = 800e3, odas_below = 0, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
+
+    krw_format = krw.create_orders_df()
+    krw_export = krw.format_create_orders_df('xls')         
     #create report
     #env = Environment(loader = FileSystemLoader('.'))
     #template = env.get_template("MAs.html")#env is variable  we pass tempalte

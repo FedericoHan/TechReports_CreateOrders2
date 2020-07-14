@@ -340,7 +340,15 @@ class CreateOrders(object):
         df_pair['Fixing'] = self.Fixing
         df_pair['Comment (Client)'] = ''       
         df_pair['Comment (Private)'] = df_pair['Instru']# what level corresponds too
-
+        #shortens Comment Private to make more compact...
+        df_pair['Comment (Private)'] = df_pair['Comment (Private)'].str.replace('Gamma oda ', 'Lah ')
+        df_pair['Comment (Private)'] = df_pair['Comment (Private)'].str.replace('21DMA ', '21 ')
+        df_pair['Comment (Private)'] = df_pair['Comment (Private)'].str.replace('55DMA ', '55 ')    
+        df_pair['Comment (Private)'] = df_pair['Comment (Private)'].str.replace('100DMA ', '100 ')
+        df_pair['Comment (Private)'] = df_pair['Comment (Private)'].str.replace('200DMA ', '200 ')
+        
+        #####
+        
         if self.Tenor == '1M': #NDFs need to have this field populated
             df_pair['Product'] = 'NDF'
         else:
@@ -367,7 +375,7 @@ class CreateOrders(object):
         return df_pair 
     
     #changed xlsx to xls
-    def format_create_orders_df(self, csv_or_xls_flag):
+    def format_create_orders_df(self, file_name,  csv_or_xls_flag):
 
         '''clean up the create_orders_df removing columns and rows not needed and then create .csv or .xlsx to upload into barraquada'''
         #call df from above method
@@ -394,10 +402,10 @@ class CreateOrders(object):
         #print(dictio_key, dictio_floats[dictio_key])
 
         if csv_or_xls_flag == 'csv':
-            df_format.to_csv(str(self.pair)+str('.csv'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read
+            df_format.to_csv(str(self.pair)+str(file_name)+str('.csv'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read
       
         elif csv_or_xls_flag == 'xls':#changed from xlsx     
-            df_format.to_excel(str(self.pair)+str('.xls'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read     
+            df_format.to_excel(str(self.pair)+str(file_name)+str('.xls'), float_format = dictio_floats[dictio_key])#so rates dont have gazillions digits which Barra cant read     
         return df_format
 
  
@@ -523,7 +531,7 @@ if __name__ == "__main__":
                       FixedCcy = 'EUR', Tenor = 'SPT', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
                       amount_basic = 1e6, odas_below = 2, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1)  
     eur_format = eur.create_orders_df()
-    eur_export = eur.format_create_orders_df('xls') 
+    eur_export = eur.format_create_orders_df('SG2','xls') 
 
     
     jpy = CreateOrders(merged_g10, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG2', Ccy1 = 'USD', Ccy2 = 'JPY', \
@@ -531,7 +539,7 @@ if __name__ == "__main__":
                       amount_basic = 700000, odas_below = 2, odas_above = 2, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
 
     jpy_format = jpy.create_orders_df()
-    jpy_export = jpy.format_create_orders_df('xls') 
+    jpy_export = jpy.format_create_orders_df('SG2','xls') 
 
 
     cnh = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'CNH', \
@@ -539,7 +547,7 @@ if __name__ == "__main__":
                       amount_basic = 1e6, odas_below = 2, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
 
     cnh_format = cnh.create_orders_df()
-    cnh_export = cnh.format_create_orders_df('xls') 
+    cnh_export = cnh.format_create_orders_df('SG1','xls') 
 
     
 
@@ -547,7 +555,7 @@ if __name__ == "__main__":
                       FixedCcy = 'USD', Tenor = '1M', Activation = 'NOW', Expiry = '', Fixing = '', Comment_client = ''  , Comment_private = '',\
                       amount_basic = 1e6, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1)  
     php_format = php.create_orders_df()
-    php_export = php.format_create_orders_df('xls')
+    php_export = php.format_create_orders_df('ZSG1','xls')
 
     
     krw = CreateOrders(merged_asia, distance_from_techs = 0.2,  order_Type ='TP', Client = 'CP85VC', Account = 'FXOETFSG1', Ccy1 = 'USD', Ccy2 = 'KRW', \
@@ -555,7 +563,7 @@ if __name__ == "__main__":
                       amount_basic = 800e3, odas_below = 0, odas_above = 3, gamma_local = 1, gamma_below =  1, gamma_above = -1) 
 
     krw_format = krw.create_orders_df()
-    krw_export = krw.format_create_orders_df('xls')         
+    krw_export = krw.format_create_orders_df('SG1','xls')         
     #create report
     #env = Environment(loader = FileSystemLoader('.'))
     #template = env.get_template("MAs.html")#env is variable  we pass tempalte

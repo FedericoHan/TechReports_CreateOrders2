@@ -212,10 +212,10 @@ class CreateOrders(object):
         
         #creates two extra columns, to make performing df.at operations more easily
         #based on:  https://stackoverflow.com/questions/61926275/pandas-row-operations-on-a-column-given-one-reference-value-on-a-different-col
-        df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True) #df_pair['Instru']looks like 'EURCNH Curncy_55DMA' etc
+        df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True) #df_pair['Instru']looks like 'EURCNH Curncy_55DMA' etc so it's split into 2 columns['Fruit'] and ['Descr']: EURCNH Cuncy  and 55DMA 
         #will use this as Index to use the df.at method later
         df_pair = df_pair.set_index('Descr')
-        df_pair.index = df_pair.index.fillna('empty') #rename 'na' or ' ', ie, EURCNH Curncy with 'empty' for df.at below
+        df_pair.index = df_pair.index.fillna('empty') #rename 'na' or ' ', ie, EURCNH Curncy with 'empty' df.at below
         
         gamma_range_local = (df_pair.at['empty', 'VALUE']*(1-df_pair.at['realized_vol_unit', 'VALUE']), df_pair.at['empty','VALUE']*(1+df_pair.at['realized_vol_unit','VALUE']))
         print('gamma_range_local '+str(gamma_range_local))
@@ -257,8 +257,10 @@ class CreateOrders(object):
         ######
         df_pair['Rate'] = (df_pair['VALUE']*(1- (df_pair.at['realized_vol_unit','VALUE'])*self.distance_from_techs)).where(df_pair['Intent']=='S',\
                                                                                                                            df_pair['VALUE']*(1 + (df_pair.at['realized_vol_unit','VALUE'] * self.distance_from_techs)))
- 
+        ###########
         #then create odas based on stdev
+        ##########
+             
         num_odas = self.odas_above + self.odas_below
         ##create num_odas new rows
         df_pair_annex = pd.DataFrame([df_pair.loc['realized_vol_unit']] * num_odas)
@@ -276,8 +278,8 @@ class CreateOrders(object):
                 
                 #multipy notional by gamma_local if in local zone or by gamma_above if above
                 if df_pair_annex['Rate'].iloc[i] < gamma_range_local[1]: #gamma_range_local = tuple(lower_bound, higher_bound) [0, 1]
-                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_local
-                df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_above
+                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * abs(self.gamma_local)
+                df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * abs(self.gamma_above)
                 
                 counter_above += 1
 
@@ -293,7 +295,7 @@ class CreateOrders(object):
                 
                 #multipy notional by gamma_local if in local zone or by gamma_above if above
                 if df_pair_annex['Rate'].iloc[i] > gamma_range_local[0]: #gamma_range_local = tuple(lower_bound, higher_bound) [0, 1]
-                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * self.gamma_local
+                    df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * abs(self.gamma_local)
                 df_pair_annex['Amount'].iloc[i] = df_pair_annex['Amount'].iloc[i] * abs(self.gamma_below)
                 
                 counter_below += 1
@@ -413,16 +415,69 @@ class CreateOrders(object):
         return df_format
 
  
+  #  def __init__(self, df_tech_levels, distance_from_techs, order_Type,\
+   #                  Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private,\
+    #                 amount_basic, odas_below = 3, odas_above = 3, gamma_local = 1, gamma_below = 1, gamma_above = 1):
+        
 class TrendingOrders(CreateOrders):
-
+    '''https://www.youtube.com/watch?v=RSl87lqOXDE ,Corey Schafer Inheritance - Creating Subclasses
+    Create new order file for Barracuda but no need for gamma stuff, just follows trend'''
+    
     def __init__(self, df_tech_levels, distance_from_techs, order_Type,\
-                     Client,   Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private):
-        super().init(self, df_tech_levels, distance_from_techs, order_Type,\
-                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private)
-
- 
-    def create_orders_trend(self):
+                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private,\
+                     amount_basic, moving_average_stop):
+        #instead of copying all variables from above class, can get access to them via one line below
+        #set odas_below , odas_above = 0 so dont have gamma odas but only MA odas.  
+        super().__init__( df_tech_levels, distance_from_techs, order_Type,\
+                     Client, Account, Ccy1, Ccy2, FixedCcy,  Tenor, Activation, Expiry, Fixing, Comment_client, Comment_private,\
+                     amount_basic, odas_below = 0, odas_above = 0, gamma_local = 1, gamma_below = 1, gamma_above = 1)
+            
+        self.moving_average_stop = moving_average_stop
+            
+    
+    def create_trending_orders_df(self):
+        #first take df from create_orders_df with all the MAs levels, odas_below = odas_above = 0 so no gamma odas confusion.
+        #so you are bidding near tech levels and then append row to include a stop one or 2 STDevs below moving_average_stop
+        df = self.create_orders_df()
+        
+        
         pass
+
+ #df_pair[['Fruit', 'Descr']] = df_pair['Instru'].str.split('_', n = 1, expand = True) #df_pair['Instru']looks like 'EURCNH Curncy_55DMA' etc so it's split into 2 columns['Fruit'] and ['Descr']: EURCNH Cuncy  and 55DMA 
+  #      #will use this as Index to use the df.at method later
+   #     df_pair = df_pair.set_index('Descr')
+    #    df_pair.index = df_pair.index.fillna('empty') #rename 'na' or ' ', ie, EURCNH Curncy with 'empty' df.at below
+        
+     #   gamma_range_local = (df_pair.at['empty', 'VALUE']*(1-df_pair.at['realized_vol_unit', 'VALUE']), df_pair.at['empty','VALUE']*(1+df_pair.at['realized_vol_unit','VALUE']))
+    #drew rapania
+eur = TrendingOrders(merged_g10, 0.1, 'TP', 'CP85VC', 'FXOETFSG1', 'EUR', 'USD', 'EUR', 'SP', 'NOW', '', '', '','', 1e6, '21' )
+eur1 = eur.create_orders_df()
+#add one extra row
+eur2 = pd.DataFrame([eur1.loc[8]] * 1)
+eur1 = eur1.append(eur2)
+
+stop_loss = eur1[eur1['Instru'].str.contains(eur.moving_average_stop)].VALUE.values
+#eur1.loc[eur1.Boolean == 10  , "Boolean"] = eur1.index
+eur1.iloc[-1, 0] = 'Chope' #Instru_column
+eur1.iloc[-1, 9] = 'SL' #Type_column
+#eur1.iloc[-1, 9] = 'SL' #intent_column
+eur1.iloc[-1, 20] = stop_loss #rate
+print(eur.moving_average_stop)
+print(type(eur.moving_average_stop))
+
+#eur1[['x', 'y']] = eur1['Instru'].str.split('_', n = 1, expand = True)
+#eur1 = eur1.set_index('y')
+#eur1['flag'] = eur1.loc[:, 'Instru'].str.contains(eur.moving_average_stop)
+
+
+
+
+
+df = pd.DataFrame({'Weight': [155, 200, 155],
+                  'Name': ['Bob', 'Joe','Bill'],
+                  'Age': [20, 30, 55]})
+
+df.loc[df.Weight == 155, 'Name'] = "Arcibaldo"
 
 if __name__ == "__main__":
     
